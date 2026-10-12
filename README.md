@@ -170,24 +170,3 @@ Every socket handler is wrapped in `guard(PERMISSION, handler)`, which rejects t
 | `request_resolved` | S → requester | `{ requestId, approved, by }` | |
 | `error_message` / `join_error` | S → one user | `{ message }` | |
 
-## Code walkthrough cheat sheet (for the interview)
-
-**Why REST *and* WebSockets?** Create/lookup room and login are one-off request/response, so REST fits. Playback, roles and chat are pushed by the server to many clients instantly, so WebSockets fit.
-
-**Why Socket.IO over raw `ws`?** Built-in rooms (`io.to(code).emit`), automatic reconnect, heartbeats, fallback to long-polling, and handshake auth. Raw `ws` would need all of that written by hand.
-
-**Where does live state live?** In memory (`roomManager` → `Room` objects), because play/pause/seek happen constantly and must be fast. MongoDB keeps only what must survive a restart (code, name, host, last video).
-
-**OOP in the socket server.** `Room` encapsulates participants, playback and requests behind methods (`play()`, `assignRole()`, `transferHost()`); `Participant` hides `socketId` from clients via `toJSON()`; `roomManager` is a singleton registry that lazy-loads rooms from the DB and avoids double-loading with a promise map.
-
-**Security points.** Passwords hashed with bcrypt (salted, slow). Password field `select: false`. Same error for "no user" and "wrong password". JWT checked on REST *and* on the socket handshake. Every socket event re-validates role and input (video id regex, seek time is a finite number, chat length capped).
-
-**Edge cases handled.** Refresh keeps your role (`savedRoles`). Two tabs of the same user don't kick each other out (`socketId` check on leave). Kicked users can't re-join. Auto-rejoin after reconnect (join on every `connect`). Browser autoplay policy handled with a one-time "Start watching" click. Two people joining an unloaded room at once share one DB load.
-
-**Trade-offs and limits.**
-- In-memory state means **one backend instance**; restarting resets live position (video and host are restored from DB).
-- localStorage token is simple across two domains but readable by JS; httpOnly cookies would need `SameSite=None; Secure` cross-site setup.
-- Sync accuracy is about ±1.5 s by design; tighter tolerance causes visible stutter on slow networks.
-- If the host leaves, the room keeps working for moderators; host powers return when the host re-joins.
-
-**How to scale to 1,000+ users / 100+ rooms.** Run several backend instances behind a load balancer with sticky sessions, add the `@socket.io/redis-adapter` so `io.to(room).emit()` reaches sockets on every instance via Redis Pub/Sub, and move `Room` state from memory into Redis hashes so any instance can serve any room.
